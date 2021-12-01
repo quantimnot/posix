@@ -1,5 +1,11 @@
-default: scrape.nim ctypeof.nim
-	nim r scrape
+
+platform_independent_modules: scrape
+	./scrape
+
+scrape:
+	nim c -d:danger -o:scrape build_tools/scrape.nim
+
+consts: scrape
 	for c0 in out/*consts_0.nim; do \
 		c1=$${c0%_*}_1.nim; \
 		c=$${c0%_*}.nim; \

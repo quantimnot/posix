@@ -134,16 +134,16 @@ proc parseFunction(body: var XmlNode): string =
       #   echo "## " & t
       else: discard
 
-template basenames(glob: string): string =
-  walkFiles(glob)
-
-iterator functions: string =
-  for f in basenames("./susv4-2018/functions/*.html"):
-    yield f.splitFile.name
-
-iterator basedefs: tuple[name: string, body: var XmlNode] =
-  for f in basenames("./susv4-2018/basedefs/*.h.html"):
-    yield (f.splitFile.name, loadHtml(f).child("html").child("body"))
+when defined posix_2004:
+  import posix_2004
+elif defined posix_2008:
+  import posix_2008
+elif defined posix_2013:
+  import posix_2013
+elif defined posix_2016:
+  import posix_2016
+else:
+  import posix_2018
 
 template moduleName(cHeader: string): string =
   cHeader.splitFile.name
@@ -203,7 +203,7 @@ proc parseCodes(n: XmlNode, sel = "blockquote > div > tt > sup"): set[Code] =
   if not e.isNil:
     return e.innerText.parseCodes
 
-proc parseHeaderConsts(n: XmlNode): Table[string, tuple[desc: string, codes: set[Code], exportFrom: string]] =
+proc parseHeaderConsts(n: XmlNode): OrderedTable[string, tuple[desc: string, codes: set[Code], exportFrom: string]] =
   for e in n.betweenAll(("p", some "@ 'following symbolic constants'"), ("dl", string.none), ("p", string.none)):
     for def in e.defs:
       # some constants had '{' '}' around them
@@ -232,12 +232,12 @@ iterator vars*(n: XmlNode): tuple[ident, kind: string, codes: set[Code]] =
           r.kind = v.kind
           yield r
 
-proc parseHeaderVars(n: XmlNode): Table[string, tuple[kind: string, codes: set[Code]]] =
+proc parseHeaderVars(n: XmlNode): OrderedTable[string, tuple[kind: string, codes: set[Code]]] =
   for e in n.betweenAll(("p", some r"@ ('following ' \w+ ' variables')"), ("pre > tt", string.none), ("p", string.none)):
     for v in e.vars:
       result[v.ident] = (v.kind, v.codes)
 
-proc parseHeaderTypes(n: XmlNode): Table[string, tuple[desc: string, codes: set[Code], exportFrom: string]] =
+proc parseHeaderTypes(n: XmlNode): OrderedTable[string, tuple[desc: string, codes: set[Code], exportFrom: string]] =
   for e in n.betweenAll(("p", some r"@ ('header shall define' ' at least'? ' the following types:')"), ("dl", string.none), ("p", string.none)):
     for def in e.defs:
       # # some constants had '{' '}' around them
@@ -245,14 +245,14 @@ proc parseHeaderTypes(n: XmlNode): Table[string, tuple[desc: string, codes: set[
       let exportFrom = def.desc.parseExportFrom
       result[def.term] = (def.desc, def.desc.parseCodes, exportFrom)
 
-proc parseHeaderStructs(n: XmlNode): Table[string, tuple[fields: Table[string, tuple[kind, desc: string, codes: set[Code]]], codes: set[Code]]] =
+proc parseHeaderStructs(n: XmlNode): OrderedTable[string, tuple[fields: OrderedTable[string, tuple[kind, desc: string, codes: set[Code]]], codes: set[Code]]] =
   for e in n:
     var captures: seq[string]
-    var struct: Table[string, tuple[fields: Table[string, tuple[kind, desc: string, codes: set[Code]]], codes: set[Code]]]
+    var struct: OrderedTable[string, tuple[fields: OrderedTable[string, tuple[kind, desc: string, codes: set[Code]]], codes: set[Code]]]
     var defines: string
     var fieldIdent: string
     var field: tuple[kind, desc: string, codes: set[Code]]
-    var fields: tuple[fields: Table[string, tuple[kind, desc: string, codes: set[Code]]], codes: set[Code]]
+    var fields: tuple[fields: OrderedTable[string, tuple[kind, desc: string, codes: set[Code]]], codes: set[Code]]
     var codes: set[Code]
     if e.matches(("p", some r"@ ('header shall de' ('fine' / 'clare') ' the ' {\w+} ' structure' (!' as described in' .)* !' as described in')"), captures):
       if e.innerText.contains("as described in"):
@@ -297,10 +297,10 @@ type Header = object
   moduleName: string
   filename: string
   doc: string
-  consts: Table[string, tuple[desc: string, codes: set[Code], exportFrom: string]]
-  vars: Table[string, tuple[kind: string, codes: set[Code]]]
-  structs: Table[string, tuple[fields: Table[string, tuple[kind, desc: string, codes: set[Code]]], codes: set[Code]]]
-  types: Table[string, tuple[desc: string, codes: set[Code], exportFrom: string]]
+  consts: OrderedTable[string, tuple[desc: string, codes: set[Code], exportFrom: string]]
+  vars: OrderedTable[string, tuple[kind: string, codes: set[Code]]]
+  structs: OrderedTable[string, tuple[fields: OrderedTable[string, tuple[kind, desc: string, codes: set[Code]]], codes: set[Code]]]
+  types: OrderedTable[string, tuple[desc: string, codes: set[Code], exportFrom: string]]
   funcs: seq[tuple[ident, desc: string, codes: set[Code]]]
   codes: set[Code]
   obMsg: string
@@ -375,7 +375,7 @@ proc main =
   # echo codes
   removeDir "out"
   createDir "out"
-  for f in basedefs():
+  for f in basedefs(headersGlob):
     # for e in f.body.between(("h4:first-of-type", string.none), ("h4", some "SYNOPSIS")):
     #   echo e.innerText
     # for e in f.body.between(("h4", some "SYNOPSIS"), ("h4", some "DESCRIPTION")):

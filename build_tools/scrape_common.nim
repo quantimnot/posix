@@ -1,7 +1,7 @@
-import xmltree, strutils, options, pegs
+import strutils, options, pegs
 import nimquery
-
-export nimquery
+import htmlparser, xmltree
+export htmlparser, xmltree, nimquery
 
 type Selector* = tuple
   cssSelector: string
