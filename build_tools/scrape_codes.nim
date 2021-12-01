@@ -5,7 +5,8 @@ import scrape_common
 proc main =
   var body = loadHtml("./susv4-2018/help/codes.html").child("html").child("body")
   var name, desc: string
-  echo "type Code* {.pure.} = enum"
+  echo """# GENERATED from scrape_codes.nim
+type Code* {.pure.} = enum"""
   for n in body.between(("h4:first-of-type", string.none), ("h4:last-of-type", string.none)):
     let e = n.querySelector("p > sup > a[name]:last-of-type")
     if not e.isNil:
