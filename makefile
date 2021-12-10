@@ -1,9 +1,32 @@
+default: posix/codes.nim posix/profiles.nim posix/subprofiles.nim posix/ffi/private/gen_typed_consts.nim
 
-platform_independent_modules: scrape
+posix/profiles.nim: profiles
+	mkdir -p posix
+	./profiles > $@
+
+posix/subprofiles.nim: subprofiles
+	mkdir -p posix
+	./subprofiles > $@
+
+posix/codes.nim: codes
+	mkdir -p posix
+	./codes > $@
+
+posix/ffi/private/gen_typed_consts.nim: scrape
+	mkdir -p posix/ffi/private
 	./scrape
 
-scrape:
-	nim c -d:danger -o:scrape build_tools/scrape.nim
+scrape: build_tools/scrape.nim posix/codes.nim
+	nim c -d:danger -o:$@ build_tools/scrape.nim
+
+codes: build_tools/scrape_codes.nim
+	nim c -d:danger -o:$@ build_tools/scrape_codes.nim
+
+profiles: build_tools/scrape_profiles.nim
+	nim c -d:danger -o:$@ build_tools/scrape_profiles.nim
+
+subprofiles: build_tools/scrape_subprofiles.nim
+	nim c -d:danger -o:$@ build_tools/scrape_subprofiles.nim
 
 consts: scrape
 	for c0 in out/*consts_0.nim; do \
@@ -11,6 +34,15 @@ consts: scrape
 		c=$${c0%_*}.nim; \
 		nim r $$c0 > $$c1 && nim r $$c1 > $$c; \
 	done
+
+conformance.lst: conformance
+	./conformance > $@
+
+conformance: conformance.c
+	$$CC -w conformance.c -o $@
+
+conformance.c: build_tools/scrape_unistd.nim
+	nim r $? > $@
 
 posix_2004:
 	mkdir -p $@

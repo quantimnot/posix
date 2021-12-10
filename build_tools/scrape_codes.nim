@@ -1,11 +1,14 @@
-import htmlparser, xmltree, strutils, options
-import nimquery
 import scrape_common
 
 proc main =
-  var body = loadHtml("./susv4-2018/help/codes.html").child("html").child("body")
+  var body = loadHtml(codesPath).child("html").child("body")
   var name, desc: string
-  echo """# GENERATED from scrape_codes.nim
+  printGeneratedByComment("codes")
+  echo """
+# This file contains the POSIX profile enum that is used by the rest of the
+# scraper and code generation.
+# This enum is also used in the final code module.
+
 type Code* {.pure.} = enum"""
   for n in body.between(("h4:first-of-type", string.none), ("h4:last-of-type", string.none)):
     let e = n.querySelector("p > sup > a[name]:last-of-type")

@@ -1,7 +1,18 @@
-import strutils, options, pegs
+import strutils, options, pegs, htmlparser, xmltree
 import nimquery
-import htmlparser, xmltree
-export htmlparser, xmltree, nimquery
+
+when defined posix_2004:
+  import posix_2004 as posix_impl
+elif defined posix_2008:
+  import posix_2008 as posix_impl
+elif defined posix_2013:
+  import posix_2013 as posix_impl
+elif defined posix_2016:
+  import posix_2016 as posix_impl
+else:
+  import posix_2018 as posix_impl
+
+export strutils, options, pegs, htmlparser, xmltree, nimquery, posix_impl
 
 type Selector* = tuple
   cssSelector: string
@@ -61,6 +72,16 @@ iterator defs*(n: XmlNode): tuple[term, desc: string] =
         result.desc = result.desc.strip
         yield result
     else: discard
+
+template splitLinesOfNextElement*(a, b) =
+  n = c.nextMatchIdx(n, a).get
+  n = c.nextIdx(n+1).get
+  for c in c[n]:
+    if c.kind == xnText:
+      for l in c.innerText.splitLines:
+        var l = l.strip(chars = {' ', '\n'})
+        if not l.isEmptyOrWhitespace:
+          b(l)
 
 iterator betweenAll*(n: XmlNode, start, query, stop: Selector): XmlNode {.raises: [ValueError, Exception]} =
   var foundStart = false
@@ -153,3 +174,47 @@ proc nextMatchIdx*(node: XmlNode, offset: int, sel: Selector): Option[int] {.rai
   for nextIdx in offset..node.len-1:
     if node[nextIdx].matches(sel):
       return some nextIdx
+
+func normalizeEnumIdent*(s: string, sep = ' '): string =
+  var beginWord = true
+  for c in s:
+    if c == sep:
+      beginWord = true
+    elif beginWord:
+      result.add c
+      beginWord = false
+    else:
+      result.add c.toLowerAscii
+
+template basenames*(glob: string): string =
+  walkFiles(glob)
+
+iterator functions*(glob: string): string =
+  for f in basenames(glob):
+    yield f.splitFile.name
+
+iterator basedefs*(glob: string): tuple[name: string, body: var XmlNode] =
+  for f in basenames(glob):
+    yield (f.splitFile.name, loadHtml(f).child("html").child("body"))
+
+template docLine*(s: var string) =
+  s.add "##\n"
+
+template addLine*(s: var string, t: string) =
+  s.add t & '\n'
+
+template docHeader*(s: var string, t: string) =
+  s.add "## " & t & '\n'
+
+template doc*(s: var string, t: string, indentLevel = 0) =
+  s.add "##   " & indent(t, indentLevel) & '\n'
+
+func doc*(t: string, indentLevel = 0): string =
+  for l in t.splitLines:
+    result.add "## " & repeat(' ', indentLevel) & l
+
+proc loadHeaderHtml*(name: string): XmlNode =
+  headerPath(name).loadHtml.child("html").child("body")
+
+template printGeneratedByComment*(source: string, commentLeader = "#") =
+  echo commentLeader & " GENERATED from the \"" & source & "\" page of the POSIX html spec by `" & instantiationInfo().filename & '`'
