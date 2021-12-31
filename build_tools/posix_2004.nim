@@ -2,8 +2,14 @@ import posix_common
 export posix_common
 
 const
-  conformancePath* = "./posix_2004/basedefs/xbd_chap02.html"
-  subprofilesPath* = "./posix_2004/xrat/subprofiles.html"
-  codesPath* = "./posix_2004/help/codes.html"
-  functionsGlob* = "./posix_2004/functions/*.html"
-  headersGlob* = "./posix_2004/basedefs/*.h.html"
+  base = "./posix_2004"
+  conformancePath* = base / "basedefs/xbd_chap02.html"
+  subprofilesPath* = base / "xrat/subprofiles.html"
+  codesPath* = base / "help/codes.html"
+  functionsDir* = base / "functions"
+  functionsGlob* = functionsDir / "*.html"
+  errorCodesPath* = functionsDir / "xsh_chap02_03.html"
+  headersGlob* = base / "basedefs/*.h.html"
+
+template headerPath*(name: string): string =
+  base / "basedefs/" & name & ".html"

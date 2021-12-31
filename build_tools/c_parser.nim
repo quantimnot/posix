@@ -1,9 +1,10 @@
 
 import pegs, options, tables
 
+import debug
+
 when isMainModule:
   import unittest
-  import print
 
 type
   Ctype* {.pure.} = enum
@@ -24,14 +25,8 @@ type
     of Func, FuncPtr:
       params*: seq[CDecl]
       funcPointers*: seq[CPointer]
+      hasOptionalParam*: bool
     else: discard
-
-
-let varPeg = """
-var <- 'extern '? {type (' ' type)*} \s+ {ident} (',' \s+ {ident})* ';'?
-type <- \ident+ !(',' / '[' / $)
-ident <- '*'* \ident+ ('[]' / '[' ([0-9]+ / \ident+) ']')?
-""".peg
 
 const
   typePegCommon = """
@@ -40,14 +35,15 @@ const
 # funcDeclStart <- type {ident} \s* '(' \s*
 # funcPtrDeclStart <- type '(' pointers {ident}? ')(' ({type} (',' \s* {type})*)? ')' ';'?
 # varDecl <- type ({ident} \s* {array}?)? \s*
-params <- ({funcPtrDecl / varDecl} (\s* ',' \s* {funcPtrDecl / varDecl})*)?
+params <- ({funcPtrDecl / varDecl} (\s* ',' \s* {funcPtrDecl / varDecl})*)? (',' \s* optionalParam)?
 funcDecl <- type funcDeclEnd
 funcPtrDecl <- type funcPtrDeclEnd
 varDecl <- type varDeclEnd?
+optionalParam <- '...'
 funcDeclEnd <- {ident} \s* '(' \s* params \s* ')'
 funcPtrDeclEnd <- '(' \s* pointers \s* {ident}? \s* ')' \s* '(' \s* params \s* ')'
 varDeclEnd <- pointers? \s* {ident} \s* {array}?
-type <- {linkage}? ({typeQualifier} \s+)? {primitive} \s* pointers? \s* {array}? \s*
+type <- linkage? (typeQualifier \s+)? {primitive / typedef} \s* pointers? \s* {array}? \s*
 typeQualifier <- 'const' / 'volatile'
 linkage <- 'extern' \s+
 pointers <- {pointer} (\s* {pointer})*
@@ -57,13 +53,14 @@ const_pointer <- '*' \s* 'const'
 restrict_pointer <- '*' \s* 'restrict'
 array <- array_pointer / restrict_array / sized_array
 restrict_array <- '[' \s* 'restrict' \s* ']'
-sized_array <- '[' \s* ([0-9]+ / ident)? \s* ']'
+sized_array <- '[' \s* array_size_expr? \s* ']'
+array_size_expr <- ([0-9]+ / ident) (\s* ('+' / '-' / '*') \s* ([0-9]+ / ident))*
 array_pointer <- '[' \s* ']'
 ident <- !keyword \ident+
 typedef <- !keyword \ident+
 keyword <- qualifier / primitive
 qualifier <- 'const' / 'volatile' / 'restrict' / 'static'
-primitive <- cbool / unsigned_int / signed_int / int / float / struct / union / void
+primitive <- (cbool / unsigned_int / signed_int / int / float / struct / union / void) !(\ident)
 struct <- 'struct' \s+ typedef
 union <- 'union' \s+ typedef
 unsigned_int <- cuchar / cushort / cuint / culonglong / culong
@@ -99,10 +96,13 @@ declList <- type (funcPtrDeclEnd / funcDeclEnd / varDeclEnd) (\s* ',' \s* (funcP
 """ & typePegCommon)
 
 func pop[T](s: var seq[T]): T {.discardable.} =
-  result = system.pop(s)
-  # print result
+  if s.len > 0:
+    result = system.pop(s)
 
-proc parse(s: string): seq[CDecl] =
+proc parse*(s: string): seq[CDecl] =
+  template trace(n): untyped =
+    when defined tracePeg: n
+    else: discard
   var
     decls: seq[CDecl]
     stack: seq[string]
@@ -113,7 +113,13 @@ proc parse(s: string): seq[CDecl] =
   let parse = declPeg.eventParser:
     pkNonTerminal:
       enter:
-        # echo "? " & $start & ' ' & p.nt.name
+        trace:
+          case p.nt.name
+          of "cbool", "cchar", "cshort", "cint", "clong", "cfloat", "cdouble",
+              "cuchar", "cushort", "cuint", "culonglong", "culong",
+              "cschar", "csshort", "csint", "cslonglong", "cslong",
+              "clonglong", "clongdouble", "void": discard
+          else: echo "? " & $start & ' ' & p.nt.name
         case p.nt.name
         of "funcPtrDecl":
           decls.add Cdecl(kind: FuncPtr)
@@ -138,14 +144,13 @@ proc parse(s: string): seq[CDecl] =
         stack.add p.nt.name
       leave:
         if length > 0:
-          # echo "= " & $start & ' ' & p.nt.name
+          trace:
+            echo "= " & $start & ' ' & p.nt.name
           let matchStr = s.substr(start, start+length-1)
           case p.nt.name
           of "typeQualifier":
             stack.pop
             decls[^1].base.qualifier = matchStr
-          of "unsigned_int", "signed_int", "int", "float":
-            stack.pop
           of "cbool", "cchar", "cshort", "cint", "clong", "cfloat", "cdouble",
              "cuchar", "cushort", "cuint", "culonglong", "culong",
              "cschar", "csshort", "csint", "cslonglong", "cslong",
@@ -154,6 +159,7 @@ proc parse(s: string): seq[CDecl] =
             stack.pop
           of "struct", "union":
             primitive = p.nt.name & ' ' & ident
+            ident.reset
             stack.pop
           of "primitive":
             stack.pop
@@ -168,9 +174,6 @@ proc parse(s: string): seq[CDecl] =
           of "restrict_pointer":
             stack.pop
             pointers.add RestrictPtr
-          of "pointer":
-            stack.pop
-            # pointers.add matchStr
           of "array":
             stack.pop
             decls[^1].base.arrayDecl = matchStr
@@ -186,59 +189,63 @@ proc parse(s: string): seq[CDecl] =
             decls[^1].ident = matchStr
           of "typedef":
             stack.pop
-            ident = matchStr
-          of "type":
-            stack.pop
-          of "funcDeclEnd", "funcPtrDeclEnd", "varDeclEnd":
-            stack.pop
-            # if stack.len > 0 and stack[0] == "declList":
-            #   print decls[^1]
+            if stack[^1] == "type":
+              decls[^1].base.primitive = matchStr
+            else:
+              ident = matchStr
           of "funcPtrDecl":
             stack.pop
             if stack.len > 0 and stack[^1] == "params":
               let p = decls.pop
               decls[^1].params.add p
-          of "funcDecl":
-            stack.pop
           of "varDecl":
             stack.pop
             if stack.len > 0 and stack[^1] == "params":
               let p = decls.pop
-              # print decls
               decls[^1].params.add p
-          of "params":
+          of "optionalParam":
             stack.pop
+            if stack.len > 0 and stack[^1] == "params":
+              decls[^1].hasOptionalParam = true
           of "declList":
             stack.pop
             decls = decls[1..^1]
             # decls.del(0) # TODO: this deletes the first element and then the last element is the first element???????
+          else:
+            stack.pop
         else:
-          # echo "! " & $start & ' ' & p.nt.name
+          trace:
+            case p.nt.name
+            of "cbool", "cchar", "cshort", "cint", "clong", "cfloat", "cdouble",
+                "cuchar", "cushort", "cuint", "culonglong", "culong",
+                "cschar", "csshort", "csint", "cslonglong", "cslong",
+                "clonglong", "clongdouble", "void": discard
+            else: echo "! " & $start & ' ' & p.nt.name
           stack.pop
-          # if "decl" == p.nt.name: print decls
           case p.nt.name
           of "decl", "funcPtrDecl", "funcDecl", "varDecl":
-            if decls.len == 0: print stack
             decls.pop
           of "funcPtrDeclEnd", "funcDeclEnd", "varDeclEnd":
             if stack.len > 0 and stack[0] == "declList":
               decls.pop
-  doAssert s.parse == s.len
-  decls
+  if s.parse == s.len:
+    return decls
+
 
 import type_conv
 
-proc toNimType(decl: var CDecl, exportAll = true, importC = true, isParam = false, distinctTypes: seq[(string, string, string)]): string =
+
+proc toNimType*(decl: CDecl, exportAll = true, importC = true, isParam = false, inclIdent = true, distinctTypes: seq[(string, string, string)]): string =
   template vis(): untyped =
     if exportAll and not isParam: "*" else: ""
   func c(s: string): string =
     if s.len > 0:
       return s & ' '
     else: return ""
-  func params(decl: var CDecl): string =
+  func params(decl: CDecl): string =
     result = "("
     var n = 0
-    for p in decl.params.mitems:
+    for p in decl.params.items:
       if n > 0:
         result.add ", "
       n.inc
@@ -249,6 +256,7 @@ proc toNimType(decl: var CDecl, exportAll = true, importC = true, isParam = fals
       result.add "ptr "
 
   var kind: string
+  var primitive = decl.base.primitive
 
   template returnType: untyped =
     if kind.len == 0 or kind == "void":
@@ -257,12 +265,15 @@ proc toNimType(decl: var CDecl, exportAll = true, importC = true, isParam = fals
       ": " & kind
 
   # ptr void -> pointer
-  if decl.base.pointers.len > 0 and decl.base.primitive == "void":
-    decl.base.pointers.pop
-    decl.base.primitive = "pointer"
+  var ptrIdx = 0
+  if decl.base.pointers.len > 0 and primitive == "void":
+    ptrIdx.inc #decl.base.pointers.pop
+    primitive = "pointer"
 
-  for ptrType in decl.base.pointers:
+  # for ptrType in decl.base.pointers:
+  while ptrIdx < decl.base.pointers.len:
     kind.add "ptr "
+    ptrIdx.inc
   if decl.base.arrayDecl.len > 0:
     if decl.base.arrayDecl == "[]":
        # TODO: should this be an UncheckedArray?
@@ -271,36 +282,47 @@ proc toNimType(decl: var CDecl, exportAll = true, importC = true, isParam = fals
   if distinctTypes.len > 0:
     var hasRewrite = false
     for distinctType in distinctTypes:
-      if decl.base.primitive == distinctType[0] and decl.ident == distinctType[1]:
+      if primitive == distinctType[0] and decl.ident == distinctType[1]:
         kind.add distinctType[2]
         hasRewrite = true
         break
     if not hasRewrite:
-      kind.add cTypeToNimType(decl.base.primitive)
+      kind.add cTypeToNimType(primitive)
   else:
-    kind.add cTypeToNimType(decl.base.primitive)
+    kind.add cTypeToNimType(primitive)
 
   case decl.kind
   of Var:
     if decl.ident.len > 0:
-      if decl.base.qualifier == "const":
-        result = (if isParam: "" else: "const ") & decl.ident & vis & ": "
-      else:
-        result = (if isParam: "" else: "var ") & decl.ident & vis & ": "
+      if inclIdent:
+        if decl.base.qualifier == "const":
+          result = (if isParam: "" else: "const ") & decl.ident & vis & ": "
+        else:
+          result = (if isParam: "" else: "var ") & decl.ident & vis & ": "
     result.add kind
   of Func:
     result = "proc " & decl.ident & vis & params(decl) & returnType
   of FuncPtr:
-    result = (if isParam: "" else: "var ") & decl.ident & vis & ": " & $decl.funcPointers & "proc" & params(decl) & returnType
+    result =
+      (if isParam: "" else: "var ") &
+      (if inclIdent: decl.ident & vis & ": " else: "") &
+      $decl.funcPointers & "proc" & params(decl) & returnType
+  else: discard
 
-proc toNimType(decl: var CDecl, exportAll = true, importC = true, isParam = false): string =
-  toNimType(decl, exportAll, importC, isParam, @[])
+
+proc toNimType*(decl: CDecl, exportAll = true, importC = true, isParam = false, inclIdent = true): string =
+  toNimType(decl, exportAll, importC, isParam, inclIdent, @[])
+
 
 when isMainModule:
   suite "C Decl Conversion":
     test "primitives":
       var decls = parse("int")
       check decls[0].toNimType == "cint"
+      decls = parse("char    *int_curr_symbol")
+      check decls[0].toNimType == "var int_curr_symbol*: ptr cchar"
+      decls = parse("size_t")
+      check decls[0].toNimType == "size_t"
       decls = parse("unsigned int")
       check decls[0].toNimType == "cuint"
       decls = parse("unsigned int **")
@@ -308,7 +330,7 @@ when isMainModule:
       decls = parse("unsigned int ** a")
       check decls[0].toNimType == "var a*: ptr ptr cuint"
       decls = parse("unsigned int **[]")
-      check decls[0].toNimType == "ptr ptr ptr cuint" # TODO: should this be: "ptr UncheckedArray[ptr ptr cuint]"
+      check decls[0].toNimType == "ptr ptr ptr cuint"
       decls = parse("int **restrict")
       check decls[0].toNimType == "ptr ptr cint"
       decls = parse("int *const*restrict")
@@ -327,45 +349,49 @@ when isMainModule:
       check decls[0].toNimType == "var a*: cint"
       check decls[1].toNimType == "var b*: cint"
       check decls[2].toNimType == "var c*: ptr cint"
+      decls = parse("extern int    opterr, optind, optopt;")
+      decls = parse("int main(int a, ...)")
+      check decls[0].toNimType == "proc main*(a: cint): cint"
+      check decls[0].hasOptionalParam
 
-# func `$`(decl: CDeclBase): string =
-#   func c(s: string): string =
-#     if s.len > 0:
-#       return s & ' '
-#     else: return ""
-#   result = decl.qualifier.c & decl.primitive.c
-#   for ptrType in decl.pointers:
-#     result.add $ptrType & ' '
-#   if decl.arrayDecl.len > 0:
-#     result.add decl.arrayDecl & ' '
-#   return result[0..^2]
-# when isMainModule:
-#   suite "C Decl Parser":
-#     test "base decl stringification":
-#       var decls = parse("int")
-#       check $decls[0].base == "int"
-#       decls = parse("int **")
-#       check $decls[0].base == "int * *"
-#       decls = parse("int **restrict")
-#       check $decls[0].base == "int * *restrict"
-#       decls = parse("int **restrict []")
-#       check $decls[0].base == "int * *restrict []"
+func `$`*(decl: CDeclBase): string =
+  func c(s: string): string =
+    if s.len > 0:
+      return s & ' '
+    else: return ""
+  result = decl.qualifier.c & decl.primitive.c
+  for ptrType in decl.pointers:
+    result.add $ptrType & ' '
+  if decl.arrayDecl.len > 0:
+    result.add decl.arrayDecl & ' '
+  return result[0..^2]
+when isMainModule:
+  suite "C Decl Parser":
+    test "base decl stringification":
+      var decls = parse("int")
+      check $decls[0].base == "cint"
+      decls = parse("int **")
+      check $decls[0].base == "cint * *"
+      decls = parse("int **restrict")
+      check $decls[0].base == "cint * *restrict"
+      decls = parse("int **restrict []")
+      check $decls[0].base == "cint * *restrict []"
 
-# func `$`(decl: CDecl): string =
-#   func c(s: string): string =
-#     if s.len > 0:
-#       return s & ' '
-#     else: return ""
-#   result = $decl.base
-#   if decl.ident.len > 0:
-#     result.add ' ' & decl.ident & ' '
-#   # case decl.kind
-#   # of Var: discard
-#   # of Func:
-#   #   decl.base.qualifier.c
-#   # of FuncPtr:
-#   #   decl.base.qualifier.c
-#   return result[0..^2]
+func `$`*(decl: CDecl): string =
+  func c(s: string): string =
+    if s.len > 0:
+      return s & ' '
+    else: return ""
+  result = $decl.base
+  if decl.ident.len > 0:
+    result.add ' ' & decl.ident & ' '
+  # case decl.kind
+  # of Var: discard
+  # of Func:
+  #   decl.base.qualifier.c
+  # of FuncPtr:
+  #   decl.base.qualifier.c
+  return result[0..^2]
 
 # when isMainModule:
 #   suite "C Decl Parser":

@@ -1,4 +1,12 @@
-default: posix/codes.nim posix/profiles.nim posix/subprofiles.nim posix/ffi/private/gen_typed_consts.nim
+tests: scrape_common_test_results c_parser_test_results
+
+c_parser_test_results: build_tools/c_parser.nim
+	nim r $? | tee $@
+
+scrape_common_test_results: build_tools/scrape_common.nim
+	nim r $? | tee $@
+
+default: posix/codes.nim posix/profiles.nim posix/options.nim posix/errors.nim posix/subprofiles.nim posix/ffi/private/gen_typed_consts.nim
 
 posix/profiles.nim: profiles
 	mkdir -p posix
@@ -12,11 +20,19 @@ posix/codes.nim: codes
 	mkdir -p posix
 	./codes > $@
 
+posix/options.nim: options
+	mkdir -p posix
+	./options > $@
+
+posix/errors.nim: errors
+	mkdir -p posix
+	./errors > $@
+
 posix/ffi/private/gen_typed_consts.nim: scrape
 	mkdir -p posix/ffi/private
 	./scrape
 
-scrape: build_tools/scrape.nim posix/codes.nim
+scrape: build_tools/scrape.nim build_tools/scrape_common.nim posix/codes.nim
 	nim c -d:danger -o:$@ build_tools/scrape.nim
 
 codes: build_tools/scrape_codes.nim
@@ -27,6 +43,12 @@ profiles: build_tools/scrape_profiles.nim
 
 subprofiles: build_tools/scrape_subprofiles.nim
 	nim c -d:danger -o:$@ build_tools/scrape_subprofiles.nim
+
+options: build_tools/scrape_options.nim posix/codes.nim
+	nim c -d:danger -o:$@ build_tools/scrape_options.nim
+
+errors: build_tools/scrape_errors.nim
+	nim c -d:danger -o:$@ build_tools/scrape_errors.nim
 
 consts: scrape
 	for c0 in out/*consts_0.nim; do \

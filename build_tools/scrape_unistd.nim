@@ -12,7 +12,7 @@
 ##   ./conformance > conformance.lst
 ##   ```
 #******
-import scrape_common
+import scrape_common, scrape_defs, render_common
 
 template print(i) =
   echo indent("""
@@ -69,13 +69,13 @@ int main() {
         var n = body.nextIdx(i+1).get
         let c = body[n]
         for e in c.betweenAll(("h5", some "@ 'Version Test Macros'"), ("dl", string.none), ("h5", some "@ 'Constants for Functions'")):
-          for (k, _) in e.defs():
+          for (k, _, _) in e.defs():
             print(k)
         splitLinesOfNextElement(("p", some "@ 'shall define the following symbolic constants for pathconf'"), printPathconfTest)
         splitLinesOfNextElement(("p", some "@ 'shall define the following symbolic constants for sysconf'"), printSysconfTest)
         n = c.nextMatchIdx(0, ("p", some "@ 'shall define the following symbolic constants for the confstr'")).get
         n = c.nextIdx(n+1).get
-        for (dt, dd) in c[n].defs():
+        for (dt, dd, _) in c[n].defs():
           printConfstrTest dt
         splitLinesOfNextElement(("p", some "@ 'following symbolic constants are reserved for compatibility'"), printConfstrTest)
   echo """

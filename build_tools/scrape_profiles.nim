@@ -8,7 +8,8 @@ proc main =
 ## scraper and code generation.
 ## This enum is also used in the final code module.
 
-type Profile* {.pure.} = enum"""
+type Profile* {.pure.} = enum
+  None = "NONE""""
   var offset = 0
   let text = body.innerText
   var matches: array[1, string]

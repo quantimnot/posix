@@ -1,7 +1,10 @@
+import strutils
+import ../posix/options
+
 const maxLinwWidth {.intdefine.} = 100
 
 type NimPrimitives {.pure.} = enum
-  unknown
+  undefined
   bool
   char
   byte
@@ -53,7 +56,7 @@ type NimPrimitives {.pure.} = enum
   char *: """ & $NimPrimitives.pchar.ord & """, \
   void *: """ & $NimPrimitives.pointer.ord & """, \
   int *: """ & $NimPrimitives.pint.ord & """, \
-  default: """ & $NimPrimitives.unknown.ord & """)
+  default: """ & $NimPrimitives.undefined.ord & """)
 """
 .}
 
@@ -66,7 +69,15 @@ macro ctypeof*(ident: string): untyped =
   let fns = $fn
   result.add quote do:
     {.emit: "#define _POSIX_C_SOURCE 200809L".}
-    {.emit: "int " & `fns` & "() { return typename(" & `s` & "); }".}
+    {.emit: "#define _XOPEN_SOURCE 700".}
+    {.emit: """
+int """ & `fns` & """() {
+#ifdef """ & `s` & '\n' & """
+  return typename(""" & `s` & """);
+#else
+  return """ & $NimPrimitives.undefined.ord & """;
+#endif
+}""".}
   result.add quote do:
     proc `fn`: cint {.importc, nodecl.}
   result.add quote do:
@@ -91,10 +102,22 @@ macro cvalue*(ident, kind): untyped =
   #   let `s` {.importc, nodecl.}: `t`
   #   echo $`s`
 
-template genDefine*(ident: string, doc, pragmas = "") =
+template genDefine*(ident: string, doc = "", options: set[PosixOption] = {}, pragmas = "") =
   var result: string
-  var kind = $ctypeof(ident)
-  result = "define \"" & ident & "\", " & kind & ", \"\"\"" & doc & "\"\"\""
+  var kind = ctypeof(ident)
+  var indentLvl = 0
+  if options.len > 0:
+    for option in options:
+      result.add indent("when defined has" & $option & ":\n", indentLvl)
+      indentLvl.inc 2
+  if kind == undefined:
+    result.add indent("""{.warning: "undefined POSIX symbol: `""" & ident & """`".}""", indentLvl)
+  else:
+    result.add indent("define \"" & ident & "\", " & $kind, indentLvl)
+    if doc.len > 0:
+      result.add ", \"\"\"" & doc & "\"\"\""
+    if pragmas.len > 0:
+      result.add ", \"\"\"" & pragmas & "\"\"\""
   echo result
 
 template declare*(ident: string, doc = "") =
@@ -105,20 +128,31 @@ template declare*(ident: string, doc = "") =
     result.add "\n    ## " & doc
   echo result
 
-template define*(ident: string; kind; doc, pragmas = "") =
+template define*(ident: string; kind; doc, pragmas = "", doImport = true) =
   var result: string
   var value = $cvalue(ident, kind)
-  result = "  " & $ident & (if pragmas.len > 0: " {." & pragmas & ".} " else: " ") & "= " & $kind & '(' & value & ')'
+  if doImport:
+    result = "let "
+  else:
+    result = "const "
+  result.add $ident & '*'
+  if pragmas.len > 0:
+    result.add pragmas
+  result.add " = " & $kind & '(' & value & ')'
   if doc.len > 0:
-    result.add "\n    ## " & doc
+    result.add "\n  ## " & doc
   echo result
 
-# {.push header: "unistd.h".}
-# echo "const"
-# let X_OK {.importc, nodecl.}: int
-# declare "X_OK"
-# define "X_OK", int
-# define "X_OK", cint, ""
-# genDefine "X_OK"
-# # echo define("X_OK")
+# {.push header: "fcntl.h".}
+# genDefine "DOESNOTEXIST", options = {PosixAdvisoryInfo}
+# genDefine "F_DUPFD_CLOEXEC", """Duplicate file descriptor with the close-on- exec flag FD_CLOEXEC set."""
+# genDefine "F_GETFD", """Get file descriptor flags."""
+# genDefine "F_SETFD", """Set file descriptor flags."""
+# genDefine "F_GETFL", """Get file status flags and file access modes."""
+# genDefine "F_SETFL", """Set file status flags."""
+# genDefine "F_GETLK", """Get record locking information."""
+# genDefine "F_SETLK", """Set record locking information."""
+# genDefine "F_SETLKW", """Set record locking information; wait if blocked."""
+# genDefine "F_GETOWN", """Get process or process group ID to receive SIGURG signals."""
+# genDefine "F_SETOWN", """Set process or process group ID to receive SIGURG signals."""
 # {.pop.}
